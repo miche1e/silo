@@ -28,6 +28,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true; // async response
       
     case 'NIP46_REQUEST':
+      console.log('Silo: NIP46_REQUEST', message.request?.method);
       handleNip46Request(message.request).then(sendResponse);
       return true; // async response
       
@@ -70,17 +71,18 @@ async function handleNip46Request(request) {
   const bunker = await getBunker();
   
   if (!bunker) {
+    console.warn('Silo: no bunker configured');
     throw new Error('No bunker configured');
   }
   
-  console.log('NIP-46 request:', request.method);
+  console.log('Silo: NIP-46 request', request.method);
   
   try {
     // Build the NIP-46 request
     const response = await sendNip46Request(bunker, request);
     return response;
   } catch (error) {
-    console.error('NIP-46 request failed:', error);
+    console.error('Silo: NIP-46 request failed', error);
     throw error;
   }
 }
