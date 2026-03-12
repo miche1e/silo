@@ -1,5 +1,12 @@
 {
+  "scripts": {
+    "build": "node build.js",
+    "prepare": "npm run build"
+  },
   "dependencies": {
     "nostr-tools": "^2.23.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
   }
 }

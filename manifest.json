@@ -20,7 +20,7 @@
     }
   },
   "background": {
-    "service_worker": "background/background.js",
+    "service_worker": "dist/background.js",
     "type": "module"
   },
   "content_scripts": [
@@ -28,6 +28,12 @@
       "matches": ["<all_urls>"],
       "js": ["content/content.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
   "icons": {

@@ -1,194 +1,144 @@
-// Silo Background - Service Worker for NIP-46 remote signing
-import { BunkerSigner, parseBunkerInput } from 'nostr-tools/nip46'
-import { SimplePool } from 'nostr-tools/pool'
-import { generateSecretKey, getPublicKey } from 'nostr-tools/pure'
+// Silo Background - NIP-46 via nostr-tools (BunkerSigner.fromBunker + connect)
+import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
+import { BunkerSigner, parseBunkerInput } from 'nostr-tools/nip46';
+import { SimplePool } from 'nostr-tools/pool';
 
-const STORAGE_KEY = 'silo_bunker_url_parsed'
-const LOCAL_SECRET_KEY = 'silo_local_secret'
+const STORAGE_KEY = 'silo_bunker_url_parsed';
+const LOCAL_SECRET_KEY = 'silo_local_secret';
 
-// Store active connections
-let bunkerSigner = null
-let pool = null
+let bunkerSigner = null;
+let pool = null;
 
-// Initialize
 browser.runtime.onInstalled.addListener(async () => {
-  console.log('Silo extension installed')
-  
-  // Generate or retrieve local secret key for NIP-46 communication
-  const result = await browser.storage.local.get(LOCAL_SECRET_KEY)
+  console.log('Silo extension installed');
+  const result = await browser.storage.local.get(LOCAL_SECRET_KEY);
   if (!result[LOCAL_SECRET_KEY]) {
-    // Generate a new local secret key
-    const secretKey = generateSecretKey()
+    const secretKey = generateSecretKey();
     await browser.storage.local.set({
       [LOCAL_SECRET_KEY]: Array.from(secretKey).join(',')
-    })
+    });
   }
-})
+});
 
-// Get local secret key
 async function getLocalSecretKey() {
-  const result = await browser.storage.local.get(LOCAL_SECRET_KEY)
-  if (!result[LOCAL_SECRET_KEY]) {
-    throw new Error('No local secret key found')
-  }
-  const keyArray = result[LOCAL_SECRET_KEY].split(',').map(Number)
-  return new Uint8Array(keyArray)
+  const result = await browser.storage.local.get(LOCAL_SECRET_KEY);
+  if (!result[LOCAL_SECRET_KEY]) throw new Error('No local secret key');
+  return new Uint8Array(result[LOCAL_SECRET_KEY].split(',').map(Number));
 }
 
-// Handle messages from popup and content scripts
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('Received message:', message.type)
-  
+  console.log('Received message:', message.type);
   switch (message.type) {
     case 'BUNKER_CONNECTED':
-      handleBunkerConnected(message.bunker).then(sendResponse)
-      return true
-      
+      handleBunkerConnected(message.bunker).then(sendResponse).catch((e) => sendResponse({ error: e.message }));
+      return true;
     case 'BUNKER_DISCONNECTED':
-      handleBunkerDisconnected()
-      break
-      
+      handleBunkerDisconnected();
+      break;
     case 'GET_BUNKER':
-      getBunker().then(sendResponse)
-      return true
-      
+      getBunker().then(sendResponse);
+      return true;
     case 'NIP46_REQUEST':
-      handleNip46Request(message.request).then(sendResponse).catch(e => sendResponse({ error: e.message }))
-      return true
-      
+      handleNip46Request(message.request).then(sendResponse).catch((e) => sendResponse({ error: e.message }));
+      return true;
     default:
-      console.warn('Unknown message type:', message.type)
+      console.warn('Unknown message type:', message.type);
   }
-})
+});
 
-// Handle bunker connection
 async function handleBunkerConnected(bunker) {
-  console.log('Connecting to bunker:', bunker)
-  
+  console.log('Connecting to bunker:', bunker);
+  // Persist config first so ensureBunkerConnected() can restore after service worker restart
+  await browser.storage.local.set({ [STORAGE_KEY]: bunker });
   try {
-    // Get local secret key
-    const localSecret = await getLocalSecretKey()
-    
-    // Initialize pool
-    if (!pool) {
-      pool = new SimplePool()
-    }
-    
-    // Parse the bunker URL
-    const bunkerPointer = await parseBunkerInput(bunker.url)
-    
-    if (!bunkerPointer) {
-      throw new Error('Invalid bunker URL')
-    }
-    
-    // Add relay if specified
-    if (bunker.relay) {
-      bunkerPointer.relays = [bunker.relay]
-    }
-    
-    // Create the bunker signer
-    bunkerSigner = new BunkerSigner(localSecret, bunkerPointer, {
+    const localSecret = await getLocalSecretKey();
+    if (!pool) pool = new SimplePool();
+
+    const bp = await parseBunkerInput(bunker.url);
+    if (!bp) throw new Error('Invalid bunker URL');
+
+    if (bunker.relay) bp.relays = [bunker.relay];
+    if (bunker.secret != null) bp.secret = bunker.secret;
+
+    bunkerSigner = BunkerSigner.fromBunker(localSecret, bp, {
       pool,
-      secret: bunker.secret
-    })
-    
-    // Connect to the bunker
-    await bunkerSigner.connect()
-    
-    console.log('Connected to bunker successfully')
-    return { success: true }
-    
+      onauth: (url) => {
+        browser.tabs.create({ url }).catch(() => {});
+      }
+    });
+    await bunkerSigner.connect();
+
+    console.log('Connected to bunker successfully');
+    return { success: true };
   } catch (error) {
-    console.error('Failed to connect to bunker:', error)
-    throw error
+    console.error('Failed to connect to bunker:', error);
+    throw error;
   }
 }
 
-// Handle bunker disconnection
 async function handleBunkerDisconnected() {
-  console.log('Disconnecting from bunker')
-  
+  console.log('Disconnecting from bunker');
   if (bunkerSigner) {
-    bunkerSigner.close()
-    bunkerSigner = null
+    await bunkerSigner.close();
+    bunkerSigner = null;
   }
-  
   if (pool) {
-    pool.close()
-    pool = null
+    pool.close([]);
+    pool = null;
   }
+  await browser.storage.local.remove(STORAGE_KEY).catch(() => {});
 }
 
-// Get current bunker configuration
 async function getBunker() {
-  try {
-    const result = await browser.storage.local.get(STORAGE_KEY)
-    return result[STORAGE_KEY] || null
-  } catch (error) {
-    console.error('Failed to get bunker:', error)
-    return null
-  }
+  const result = await browser.storage.local.get(STORAGE_KEY);
+  return result[STORAGE_KEY] || null;
 }
 
-// Handle NIP-46 requests from content script
+/** Reconnect from stored config when service worker was restarted (bunkerSigner is null). */
+async function ensureBunkerConnected() {
+  if (bunkerSigner) return;
+  const bunker = await getBunker();
+  if (!bunker) throw new Error('No bunker configured. Please connect first.');
+  await handleBunkerConnected(bunker);
+}
+
+function paramsToArray(method, params) {
+  if (Array.isArray(params)) return params;
+  if (params == null || typeof params !== 'object') return [];
+  if (method === 'sign_event') return [params];
+  if (method === 'nip04_encrypt' && params.pubkey != null) return [params.pubkey, params.content];
+  if (method === 'nip04_decrypt' && params.pubkey != null) return [params.pubkey, params.content];
+  if (method === 'connect') return [params.pubkey, params.relay].filter((x) => x != null);
+  if (method === 'delegate' && params.delegate != null) return [params.delegate];
+  return [];
+}
+
 async function handleNip46Request(request) {
-  if (!bunkerSigner) {
-    throw new Error('No bunker configured. Please connect first.')
-  }
-  
-  console.log('NIP-46 request:', request.method, request.params)
-  
-  try {
-    let result
-    
-    switch (request.method) {
-      case 'get_public_key':
-        result = await bunkerSigner.getPublicKey()
-        break
-        
-      case 'sign_event':
-        result = await bunkerSigner.signEvent(request.params[0])
-        break
-        
-      case 'get_relays':
-        result = await bunkerSigner.getRelays()
-        break
-        
-      case 'nip04_encrypt':
-        result = await bunkerSigner.nip04.encrypt(request.params[0], request.params[1])
-        break
-        
-      case 'nip04_decrypt':
-        result = await bunkerSigner.nip04.decrypt(request.params[0], request.params[1])
-        break
-        
-      case 'connect':
-        // Already connected, just acknowledge
-        result = { success: true }
-        break
-        
-      case 'ping':
-        try {
-          await bunkerSigner.ping()
-          result = true
-        } catch (e) {
-          result = false
-        }
-        break
-        
-      default:
-        // Try calling as a generic method on the signer
-        if (typeof bunkerSigner[request.method] === 'function') {
-          result = await bunkerSigner[request.method](...request.params)
-        } else {
-          throw new Error(`Unknown method: ${request.method}`)
-        }
-    }
-    
-    return result
-    
-  } catch (error) {
-    console.error('NIP-46 request failed:', error)
-    throw error
+  await ensureBunkerConnected();
+  const { method, params } = request;
+  const p = paramsToArray(method, params);
+
+  switch (method) {
+    case 'get_public_key':
+      return await bunkerSigner.getPublicKey();
+    case 'sign_event':
+      return await bunkerSigner.signEvent(p[0]);
+    case 'get_relays':
+      return await bunkerSigner.bp.relays;
+    case 'nip04_encrypt':
+      return await bunkerSigner.nip04Encrypt(p[0], p[1]);
+    case 'nip04_decrypt':
+      return await bunkerSigner.nip04Decrypt(p[0], p[1]);
+    case 'connect':
+      return { success: true };
+    case 'ping':
+      try {
+        await bunkerSigner.ping();
+        return true;
+      } catch {
+        return false;
+      }
+    default:
+      throw new Error(`Unknown method: ${method}`);
   }
 }

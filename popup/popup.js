@@ -13,16 +13,19 @@ const disconnectBtn = document.getElementById('disconnect-btn');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+  console.log('Silo popup: DOMContentLoaded');
   await loadConfig();
   setupEventListeners();
+  console.log('Silo popup: init done');
 });
 
 // Load saved configuration
 async function loadConfig() {
   try {
+    console.log('Silo popup: loadConfig');
     const result = await browser.storage.local.get(STORAGE_KEY);
     const bunkerUrl = result[STORAGE_KEY];
-    
+    console.log('Silo popup: loadConfig result', { hasBunkerUrl: !!bunkerUrl });
     if (bunkerUrl) {
       bunkerInput.value = bunkerUrl;
       setStatus(STATUS_CONNECTED, 'Connected to remote signer');
@@ -34,18 +37,23 @@ async function loadConfig() {
       disconnectBtn.style.display = 'none';
     }
   } catch (error) {
-    console.error('Failed to load config:', error);
+    console.error('Silo popup: loadConfig failed', error);
     setStatus(STATUS_DISCONNECTED, 'Error loading config');
   }
 }
 
 // Setup event listeners
 function setupEventListeners() {
-  connectBtn.addEventListener('click', connect);
+  console.log('Silo popup: setupEventListeners', { connectBtn: !!connectBtn, disconnectBtn: !!disconnectBtn });
+  connectBtn.addEventListener('click', () => {
+    console.log('Silo popup: Connect button clicked');
+    connect();
+  });
   disconnectBtn.addEventListener('click', disconnect);
-  
+
   bunkerInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
+      console.log('Silo popup: Enter in bunker input');
       connect();
     }
   });
@@ -54,6 +62,7 @@ function setupEventListeners() {
 // Parse bunker URL
 function parseBunkerUrl(url) {
   try {
+    console.log('Silo popup: parseBunkerUrl', url?.slice(0, 50));
     // Handle bunker:// format
     if (url.startsWith('bunker://')) {
       const parsed = new URL(url);
@@ -78,6 +87,7 @@ function parseBunkerUrl(url) {
     
     throw new Error('Invalid bunker URL format');
   } catch (error) {
+    console.warn('Silo popup: parseBunkerUrl error', error);
     throw new Error('Invalid bunker URL. Must start with bunker:// or https://');
   }
 }
@@ -85,39 +95,50 @@ function parseBunkerUrl(url) {
 // Connect to bunker
 async function connect() {
   const url = bunkerInput.value.trim();
-  
+  console.log('Silo popup: connect()', { url: url || '(empty)', length: url.length });
+
   if (!url) {
+    console.log('Silo popup: connect aborted, no URL');
     setStatus(STATUS_DISCONNECTED, 'Please enter a bunker URL');
     return;
   }
-  
+
   try {
     // Validate and parse the URL
     const bunker = parseBunkerUrl(url);
-    
+    console.log('Silo popup: parseBunkerUrl ok', { url: bunker.url, hasRelay: !!bunker.relay });
+
     // Save to storage
     await browser.storage.local.set({
       [STORAGE_KEY]: bunker.url,
       [STORAGE_KEY + '_parsed']: bunker
     });
-    
+    console.log('Silo popup: storage saved');
+
     // Notify background script
-    await browser.runtime.sendMessage({
+    const response = await browser.runtime.sendMessage({
       type: 'BUNKER_CONNECTED',
       bunker: bunker
     });
-    
+    console.log('Silo popup: BUNKER_CONNECTED response', response);
+
+    if (response && response.error) {
+      setStatus(STATUS_DISCONNECTED, response.error);
+      return;
+    }
     setStatus(STATUS_CONNECTED, 'Connected to remote signer');
     connectBtn.style.display = 'none';
     disconnectBtn.style.display = 'block';
-    
+    console.log('Silo popup: connect done, UI updated');
   } catch (error) {
+    console.error('Silo popup: connect failed', error);
     setStatus(STATUS_DISCONNECTED, error.message);
   }
 }
 
 // Disconnect from bunker
 async function disconnect() {
+  console.log('Silo popup: disconnect()');
   try {
     await browser.storage.local.remove([
       STORAGE_KEY,
@@ -133,9 +154,9 @@ async function disconnect() {
     setStatus(STATUS_DISCONNECTED, 'Disconnected');
     connectBtn.style.display = 'block';
     disconnectBtn.style.display = 'none';
-    
+    console.log('Silo popup: disconnect done');
   } catch (error) {
-    console.error('Failed to disconnect:', error);
+    console.error('Silo popup: disconnect failed', error);
   }
 }
 
