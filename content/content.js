@@ -19,25 +19,20 @@ window.addEventListener('message', (event) => {
       reply(id, 'Extension context invalidated. Reload the page.');
       return;
     }
-    browser.runtime.sendMessage(
-      { type: 'NIP46_REQUEST', request: { method, params: params || {} } },
-      (response) => {
-        try {
-          if (browser.runtime.lastError) {
-            reply(id, browser.runtime.lastError.message);
-            console.warn('Silo: bridge error', browser.runtime.lastError.message);
-          } else if (response && response.error) {
-            reply(id, response.error);
-            console.warn('Silo: backend error', response.error);
-          } else {
-            reply(id, null, response);
-            console.log('Silo: response', { id, method, result: response });
-          }
-        } catch (e) {
-          reply(id, e.message || 'Extension context invalidated. Reload the page.');
+    browser.runtime.sendMessage({ type: 'NIP46_REQUEST', request: { method, params: params || {} } })
+      .then((response) => {
+        if (response && response.error) {
+          reply(id, response.error);
+          console.warn('Silo: backend error', response.error);
+        } else {
+          reply(id, null, response);
+          console.log('Silo: response', { id, method, result: response });
         }
-      }
-    );
+      })
+      .catch((e) => {
+        reply(id, e.message || 'Extension context invalidated. Reload the page.');
+        console.warn('Silo: sendMessage failed', e);
+      });
   } catch (e) {
     reply(id, e.message || 'Extension context invalidated. Reload the page.');
     console.warn('Silo: sendMessage failed', e);

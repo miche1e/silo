@@ -21,11 +21,6 @@
     if (d.error) p.reject(new Error(d.error)); else p.resolve(d.result);
   });
 
-  function getEventHash(event) {
-    const data = JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]);
-    return 'sha256-placeholder-' + btoa(data).slice(0, 64);
-  }
-
   function _call(method, params = {}) {
     return new Promise((resolve, reject) => {
       const reqId = ++id;
@@ -37,13 +32,7 @@
 
   window.nostr = {
     getPublicKey: () => _call('get_public_key'),
-    signEvent: async (event) => {
-      const pubkey = await window.nostr.getPublicKey();
-      event.pubkey = pubkey;
-      event.created_at = Math.floor(Date.now() / 1000);
-      event.id = getEventHash(event);
-      return _call('sign_event', event);
-    },
+    signEvent: (event) => _call('sign_event', event),
     getRelays: () => _call('get_relays'),
     connect: (pubkey, relay) => _call('connect', { pubkey, relay }),
     encrypt: (pubkey, content) => _call('nip04_encrypt', { pubkey, content }),

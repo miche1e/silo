@@ -66,7 +66,14 @@ async function handleBunkerConnected(bunker) {
         browser.tabs.create({ url }).catch(() => {});
       }
     });
-    await bunkerSigner.connect();
+    // NIP-46: connect params are [remote-signer-pubkey, optional_secret, optional_requested_perms]
+    const connectParams = [
+      bp.pubkey,
+      typeof bp.secret === 'string' ? bp.secret : '',
+      'sign_event:24242'
+    ];
+    console.log('Silo: sending connect with params', connectParams.length, connectParams);
+    await bunkerSigner.sendRequest('connect', connectParams);
 
     console.log('Connected to bunker successfully');
     return { success: true };
@@ -114,22 +121,34 @@ function paramsToArray(method, params) {
 }
 
 async function handleNip46Request(request) {
+  console.log('Silo: handleNip46Request', request);
   await ensureBunkerConnected();
   const { method, params } = request;
   const p = paramsToArray(method, params);
+  console.log('Silo: NIP46 method/params', method, p);
 
   switch (method) {
     case 'get_public_key':
-      return await bunkerSigner.getPublicKey();
-    case 'sign_event':
-      return await bunkerSigner.signEvent(p[0]);
+      return bunkerSigner.bp.pubkey;
+    case 'sign_event': {
+      const signed = await bunkerSigner.signEvent(p[0]);
+      console.log('Silo: sign_event result kind/id', signed.kind, signed.id);
+      return signed;
+    }
     case 'get_relays':
       return await bunkerSigner.bp.relays;
-    case 'nip04_encrypt':
-      return await bunkerSigner.nip04Encrypt(p[0], p[1]);
-    case 'nip04_decrypt':
-      return await bunkerSigner.nip04Decrypt(p[0], p[1]);
+    case 'nip04_encrypt': {
+      const enc = await bunkerSigner.nip04Encrypt(p[0], p[1]);
+      console.log('Silo: nip04_encrypt result length', enc?.length);
+      return enc;
+    }
+    case 'nip04_decrypt': {
+      const dec = await bunkerSigner.nip04Decrypt(p[0], p[1]);
+      console.log('Silo: nip04_decrypt result length', dec?.length);
+      return dec;
+    }
     case 'connect':
+      console.log('Silo: connect noop ack');
       return { success: true };
     case 'ping':
       try {

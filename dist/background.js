@@ -5544,6 +5544,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 async function handleBunkerConnected(bunker) {
   console.log("Connecting to bunker:", bunker);
+  await browser.storage.local.set({ [STORAGE_KEY]: bunker });
   try {
     const localSecret = await getLocalSecretKey();
     if (!pool) pool = new SimplePool2();
@@ -5558,8 +5559,13 @@ async function handleBunkerConnected(bunker) {
         });
       }
     });
-    await bunkerSigner.connect();
-    await browser.storage.local.set({ [STORAGE_KEY]: bunker });
+    const connectParams = [
+      bp.pubkey,
+      typeof bp.secret === "string" ? bp.secret : "",
+      "sign_event:24242"
+    ];
+    console.log("Silo: sending connect with params", connectParams.length, connectParams);
+    await bunkerSigner.sendRequest("connect", connectParams);
     console.log("Connected to bunker successfully");
     return { success: true };
   } catch (error) {
@@ -5584,6 +5590,12 @@ async function getBunker() {
   const result = await browser.storage.local.get(STORAGE_KEY);
   return result[STORAGE_KEY] || null;
 }
+async function ensureBunkerConnected() {
+  if (bunkerSigner) return;
+  const bunker = await getBunker();
+  if (!bunker) throw new Error("No bunker configured. Please connect first.");
+  await handleBunkerConnected(bunker);
+}
 function paramsToArray(method, params) {
   if (Array.isArray(params)) return params;
   if (params == null || typeof params !== "object") return [];
@@ -5595,21 +5607,33 @@ function paramsToArray(method, params) {
   return [];
 }
 async function handleNip46Request(request) {
-  if (!bunkerSigner) throw new Error("No bunker configured. Please connect first.");
+  console.log("Silo: handleNip46Request", request);
+  await ensureBunkerConnected();
   const { method, params } = request;
   const p = paramsToArray(method, params);
+  console.log("Silo: NIP46 method/params", method, p);
   switch (method) {
     case "get_public_key":
-      return await bunkerSigner.getPublicKey();
-    case "sign_event":
-      return await bunkerSigner.signEvent(p[0]);
+      return bunkerSigner.bp.pubkey;
+    case "sign_event": {
+      const signed = await bunkerSigner.signEvent(p[0]);
+      console.log("Silo: sign_event result kind/id", signed.kind, signed.id);
+      return signed;
+    }
     case "get_relays":
       return await bunkerSigner.bp.relays;
-    case "nip04_encrypt":
-      return await bunkerSigner.nip04Encrypt(p[0], p[1]);
-    case "nip04_decrypt":
-      return await bunkerSigner.nip04Decrypt(p[0], p[1]);
+    case "nip04_encrypt": {
+      const enc = await bunkerSigner.nip04Encrypt(p[0], p[1]);
+      console.log("Silo: nip04_encrypt result length", enc?.length);
+      return enc;
+    }
+    case "nip04_decrypt": {
+      const dec = await bunkerSigner.nip04Decrypt(p[0], p[1]);
+      console.log("Silo: nip04_decrypt result length", dec?.length);
+      return dec;
+    }
     case "connect":
+      console.log("Silo: connect noop ack");
       return { success: true };
     case "ping":
       try {
